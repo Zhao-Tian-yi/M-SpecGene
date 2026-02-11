@@ -129,12 +129,14 @@ class TwoStageDetector(BaseDetector):
         #x_rgb = self.backbone(batch_inputs_rgb)
         #x_ir = self.backbone(batch_inputs_ir)
 
-        #batch_inputs_rgbt = torch.cat([batch_inputs_rgb, batch_inputs_ir],dim=0)
-        b,c,h,w = batch_inputs.shape
-        batch_inputs_rgbt = batch_inputs.view(b*2,c//2,h,w)
-        x_rgbt = self.backbone(batch_inputs_rgbt)
-        b,c,h,w = x_rgbt.shape
-        x = x_rgbt.view(b//2,c*2,h,w)
+        b, c, h, w = batch_inputs.shape
+        if c == 6:
+            batch_inputs_rgbt = batch_inputs.view(b * 2, c // 2, h, w)
+            x_rgbt = self.backbone(batch_inputs_rgbt)
+            b, c, h, w = x_rgbt.shape
+            x = x_rgbt.view(b // 2, c * 2, h, w)
+        else:
+            x = self.backbone(batch_inputs)
 
         #x = torch.cat([x_rgb,x_ir],dim=1)
         # x = self.backbone(batch_inputs)

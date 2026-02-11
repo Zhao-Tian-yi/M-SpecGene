@@ -1,7 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import cv2
 import logging
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -117,6 +117,26 @@ class EncoderDecoder(BaseSegmentor):
             else:
                 self.auxiliary_head = MODELS.build(auxiliary_head)
 
+    @staticmethod
+    def _pack_rgbt_inputs(inputs: Tensor) -> Tuple[Tensor, bool, int]:
+        if inputs.shape[1] != 6:
+            return inputs, False, inputs.shape[0]
+        b, c, h, w = inputs.shape
+        return inputs.view(b * 2, c // 2, h, w), True, b
+
+    @staticmethod
+    def _merge_rgbt_features(features: List[Tensor],
+                             batch_size: int) -> List[Tensor]:
+        merged = []
+        for feat in features:
+            b, c, h, w = feat.shape
+            if b != batch_size * 2:
+                raise ValueError(
+                    'Unexpected RGBT feature batch size. '
+                    f'Expected {batch_size * 2}, but got {b}.')
+            merged.append(feat.view(batch_size, c * 2, h, w))
+        return merged
+
     def extract_feat(self, inputs: Tensor) -> List[Tensor]:
         """Extract features from images."""
         x = self.backbone(inputs)
@@ -129,20 +149,13 @@ class EncoderDecoder(BaseSegmentor):
         """Encode images with backbone and decode into a semantic segmentation
         map of the same size as input."""
 
-        ##COMBINE RGB and IR in the B dimension
-        input_rgb = inputs[:,0:3,:,:]
-        input_ir = inputs[:,3:6,:,:]
-        input_rgbt = torch.cat([input_rgb,input_ir],dim=0)
-        input_rgbt = torch.cat([input_rgb, input_ir], dim=0)
-        x_rgbt = self.extract_feat(input_rgbt)
-        b,c,h,w = x_rgbt[0].shape
-        x_stage0 = x_rgbt[0].view(b//2,c*2,h,w)#[:B_size,:,:,:] + x_rgbt[0][B_size:,:,:,:]
-        b,c,h,w = x_rgbt[1].shape
-        x_stage1 = x_rgbt[1].view(b//2,c*2,h,w)#[:B_size,:,:,:] + x_rgbt[1][B_size:,:,:,:]
-        b,c,h,w = x_rgbt[2].shape
-        x_stage2 = x_rgbt[2].view(b//2,c*2,h,w)#[:B_size,:,:,:] + x_rgbt[2][B_size:,:,:,:]
-        b,c,h,w = x_rgbt[3].shape
-        x_stage3 = x_rgbt[3].view(b//2,c*2,h,w)#[:B_size,:,:,:] + x_rgbt[3][B_size:,:,:,:]
+        inputs, is_rgbt, batch_size = self._pack_rgbt_inputs(inputs)
+        x_rgbt = self.extract_feat(inputs)
+        if is_rgbt:
+            x_stage0, x_stage1, x_stage2, x_stage3 = self._merge_rgbt_features(
+                x_rgbt, batch_size)
+        else:
+            x_stage0, x_stage1, x_stage2, x_stage3 = x_rgbt
         
         '''
         input_rgb = inputs[:,0:3,:,:]

@@ -65,12 +65,14 @@ class LoadRGBTImageFromFile(BaseTransform):
                  imdecode_backend: str = 'cv2',
                  file_client_args: Optional[dict] = None,
                  ignore_empty: bool = False,
+                 mode: str = 'rgbt',
                  *,
                  backend_args: Optional[dict] = None) -> None:
         self.ignore_empty = ignore_empty
         self.to_float32 = to_float32
         self.color_type = color_type
         self.imdecode_backend = imdecode_backend
+        self.mode = mode
 
         self.file_client_args: Optional[dict] = None
         self.backend_args: Optional[dict] = None
@@ -87,6 +89,24 @@ class LoadRGBTImageFromFile(BaseTransform):
         if backend_args is not None:
             self.backend_args = backend_args.copy()
 
+        if self.mode not in {'rgbt', 'rgb', 'ir'}:
+            raise ValueError(
+                f'Invalid mode "{self.mode}". Supported modes are '
+                '"rgbt", "rgb", and "ir".')
+
+    @staticmethod
+    def _ensure_three_channels(img: np.ndarray) -> np.ndarray:
+        if img.ndim == 2:
+            img = img[:, :, np.newaxis]
+        if img.shape[2] == 1:
+            img = np.repeat(img, 3, axis=2)
+        return img
+
+    @staticmethod
+    def _resolve_ir_path(filename: str) -> str:
+        return filename.replace('ADEChallengeData2016',
+                                'ADEChallengeData2016_T')
+
     def transform(self, results: dict) -> Optional[dict]:
         """Functions to load image.
 
@@ -99,21 +119,39 @@ class LoadRGBTImageFromFile(BaseTransform):
         """
 
         filename = results['img_path']
-        filename_ir = filename.replace('ADEChallengeData2016', 'ADEChallengeData2016_T')
         try:
-            if self.file_client_args is not None:
-                file_client = fileio.FileClient.infer_client(
-                    self.file_client_args, filename)
-                img_bytes = file_client.get(filename)
+            if self.mode in {'rgb', 'rgbt'}:
+                if self.file_client_args is not None:
+                    file_client = fileio.FileClient.infer_client(
+                        self.file_client_args, filename)
+                    img_bytes = file_client.get(filename)
+                else:
+                    img_bytes = fileio.get(
+                        filename, backend_args=self.backend_args)
+                img = mmcv.imfrombytes(
+                    img_bytes,
+                    flag=self.color_type,
+                    backend=self.imdecode_backend)
+                img = self._ensure_three_channels(img)
             else:
-                img_bytes = fileio.get(
-                    filename, backend_args=self.backend_args)
-                img_bytes_ir = fileio.get(
-                    filename_ir, backend_args=self.backend_args)
-            img = mmcv.imfrombytes(
-                img_bytes, flag=self.color_type, backend=self.imdecode_backend)
-            img_ir = mmcv.imfrombytes(
-                img_bytes_ir, flag=self.color_type, backend=self.imdecode_backend)
+                img = None
+
+            if self.mode in {'ir', 'rgbt'}:
+                filename_ir = self._resolve_ir_path(filename)
+                if self.file_client_args is not None:
+                    file_client = fileio.FileClient.infer_client(
+                        self.file_client_args, filename_ir)
+                    img_bytes_ir = file_client.get(filename_ir)
+                else:
+                    img_bytes_ir = fileio.get(
+                        filename_ir, backend_args=self.backend_args)
+                img_ir = mmcv.imfrombytes(
+                    img_bytes_ir,
+                    flag=self.color_type,
+                    backend=self.imdecode_backend)
+                img_ir = self._ensure_three_channels(img_ir)
+            else:
+                img_ir = None
         except Exception as e:
             if self.ignore_empty:
                 return None
@@ -121,12 +159,18 @@ class LoadRGBTImageFromFile(BaseTransform):
                 raise e
         # in some cases, images are not read successfully, the img would be
         # `None`, refer to https://github.com/open-mmlab/mmpretrain/issues/1427
-        assert img is not None, f'failed to load image: {filename}'
+        if self.mode == 'rgb':
+            assert img is not None, f'failed to load image: {filename}'
+        elif self.mode == 'ir':
+            assert img_ir is not None, f'failed to load image: {filename}'
+            img = img_ir
+        else:
+            assert img is not None and img_ir is not None, (
+                f'failed to load image or ir image: {filename}')
+            img = np.concatenate((img, img_ir), axis=2)
+
         if self.to_float32:
             img = img.astype(np.float32)
-            img_ir = img_ir.astype(np.float32)
-
-        img = np.concatenate((img,img_ir),axis=2)
         results['img'] = img
         results['img_shape'] = img.shape[:2]
         results['ori_shape'] = img.shape[:2]
@@ -136,6 +180,7 @@ class LoadRGBTImageFromFile(BaseTransform):
         repr_str = (f'{self.__class__.__name__}('
                     f'ignore_empty={self.ignore_empty}, '
                     f'to_float32={self.to_float32}, '
+                    f"mode='{self.mode}', "
                     f"color_type='{self.color_type}', "
                     f"imdecode_backend='{self.imdecode_backend}', ")
 
