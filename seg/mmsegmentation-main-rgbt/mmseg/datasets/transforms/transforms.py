@@ -98,14 +98,18 @@ class RGBTPhotoMetricDistortion(BaseTransform):
         # img = img.astype(np.float32) * alpha + beta
         # img = np.clip(img, 0, 255)
 
-        img1 = img[:,:,:3]
-        img2 = img[:,:,3:6]
-        img1 = img1.astype(np.float32) * alpha + beta
-        img1 = np.clip(img1, 0, 255)
-        img2 = img2.astype(np.float32) * alpha + beta
-        img2 = np.clip(img2, 0, 255)
-        img = np.concatenate((img1,img2),axis=2)
+        if img.shape[2] > 3:
+            img1 = img[:, :, :3]
+            img2 = img[:, :, 3:6]
+            img1 = img1.astype(np.float32) * alpha + beta
+            img1 = np.clip(img1, 0, 255)
+            img2 = img2.astype(np.float32) * alpha + beta
+            img2 = np.clip(img2, 0, 255)
+            img = np.concatenate((img1, img2), axis=2)
+            return img.astype(np.uint8)
 
+        img = img.astype(np.float32) * alpha + beta
+        img = np.clip(img, 0, 255)
         return img.astype(np.uint8)
 
     def brightness(self, img: np.ndarray) -> np.ndarray:
@@ -150,15 +154,24 @@ class RGBTPhotoMetricDistortion(BaseTransform):
 
         if random.randint(2):
             img1 = img[:, :, :3]
-            img2 = img[:, :, 3:6]
-            img1 = mmcv.bgr2hsv(img1)
-            img2 = mmcv.bgr2hsv(img2)
-            img1[:, :, 1],img2[:, :, 1] = self.convert2(
-                img1[:, :, 1],img2[:, :, 1],
-                alpha=random.uniform(self.saturation_lower,  self.saturation_upper))
-            img1 = mmcv.hsv2bgr(img1)
-            img2 = mmcv.hsv2bgr(img2)
-            img = np.concatenate((img1, img2), axis=2)
+            if img.shape[2] > 3:
+                img2 = img[:, :, 3:6]
+                img1 = mmcv.bgr2hsv(img1)
+                img2 = mmcv.bgr2hsv(img2)
+                img1[:, :, 1], img2[:, :, 1] = self.convert2(
+                    img1[:, :, 1], img2[:, :, 1],
+                    alpha=random.uniform(self.saturation_lower,
+                                         self.saturation_upper))
+                img1 = mmcv.hsv2bgr(img1)
+                img2 = mmcv.hsv2bgr(img2)
+                img = np.concatenate((img1, img2), axis=2)
+            else:
+                img1 = mmcv.bgr2hsv(img1)
+                img1[:, :, 1] = np.clip(
+                    img1[:, :, 1].astype(np.float32) *
+                    random.uniform(self.saturation_lower,
+                                   self.saturation_upper), 0, 255)
+                img = mmcv.hsv2bgr(img1)
         return img
 
     def hue(self, img: np.ndarray) -> np.ndarray:
@@ -172,17 +185,26 @@ class RGBTPhotoMetricDistortion(BaseTransform):
 
         if random.randint(2):
             img1 = img[:, :, :3]
-            img2 = img[:, :, 3:6]
-            # img = mmcv.bgr2hsv(img)
-            img1 = mmcv.bgr2hsv(img1)
-            img2 = mmcv.bgr2hsv(img2)
-            random_hue_delta = random.randint(-self.hue_delta, self.hue_delta)
-            img1[:, :, 0] = (img1[:, :, 0].astype(int) +random_hue_delta ) % 180
-            img2[:, :, 0] = (img2[:, :, 0].astype(int) +random_hue_delta) % 180
-            # img = mmcv.hsv2bgr(img)
-            img1 = mmcv.hsv2bgr(img1)
-            img2 = mmcv.hsv2bgr(img2)
-            img = np.concatenate((img1, img2), axis=2)
+            if img.shape[2] > 3:
+                img2 = img[:, :, 3:6]
+                img1 = mmcv.bgr2hsv(img1)
+                img2 = mmcv.bgr2hsv(img2)
+                random_hue_delta = random.randint(-self.hue_delta,
+                                                  self.hue_delta)
+                img1[:, :, 0] = (img1[:, :, 0].astype(int) +
+                                 random_hue_delta) % 180
+                img2[:, :, 0] = (img2[:, :, 0].astype(int) +
+                                 random_hue_delta) % 180
+                img1 = mmcv.hsv2bgr(img1)
+                img2 = mmcv.hsv2bgr(img2)
+                img = np.concatenate((img1, img2), axis=2)
+            else:
+                img1 = mmcv.bgr2hsv(img1)
+                random_hue_delta = random.randint(-self.hue_delta,
+                                                  self.hue_delta)
+                img1[:, :, 0] = (img1[:, :, 0].astype(int) +
+                                 random_hue_delta) % 180
+                img = mmcv.hsv2bgr(img1)
         return img
 
     def transform(self, results: dict) -> dict:

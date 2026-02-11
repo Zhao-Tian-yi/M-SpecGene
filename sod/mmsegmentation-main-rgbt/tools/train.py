@@ -40,6 +40,11 @@ def parse_args():
         choices=['none', 'pytorch', 'slurm', 'mpi'],
         default='none',
         help='job launcher')
+    parser.add_argument(
+        '--rgbt-mode',
+        choices=['rgbt', 'rgb', 'ir'],
+        default='rgbt',
+        help='Input mode for RGBT pipelines.')
     # When using PyTorch version >= 2.0.0, the `torch.distributed.launch`
     # will pass the `--local-rank` parameter to `tools/train.py` instead
     # of `--local_rank`.
@@ -51,6 +56,58 @@ def parse_args():
     return args
 
 
+def _match_channel_values(values, channels):
+    if values is None:
+        return values
+    if isinstance(values, (int, float)):
+        return values
+    if len(values) == channels:
+        return values
+    if len(values) == 3 and channels == 6:
+        return list(values) * 2
+    if len(values) == 6 and channels == 3:
+        return list(values)[:3]
+    if len(values) == 4 and channels == 6:
+        return list(values[:3]) + [values[3]] * 3
+    if len(values) == 4 and channels == 3:
+        return list(values)[:3]
+    return values
+
+
+def _update_pipeline_rgbt_mode(pipeline, mode):
+    channels = 6 if mode == 'rgbt' else 3
+    for transform in pipeline:
+        if transform.get('type') == 'LoadRGBTImageFromFile':
+            transform['mode'] = mode
+        if transform.get('type') == 'Pad' and 'pad_val' in transform:
+            transform['pad_val'] = _match_channel_values(
+                transform['pad_val'], channels)
+
+
+def _update_rgbt_mode(cfg, mode):
+    channels = 6 if mode == 'rgbt' else 3
+    for key in ('train_dataloader', 'val_dataloader', 'test_dataloader'):
+        if key not in cfg:
+            continue
+        data_cfg = cfg[key].get('dataset')
+        while isinstance(data_cfg, dict) and 'dataset' in data_cfg:
+            data_cfg = data_cfg['dataset']
+        if isinstance(data_cfg, dict) and 'pipeline' in data_cfg:
+            _update_pipeline_rgbt_mode(data_cfg['pipeline'], mode)
+
+    if 'tta_pipeline' in cfg:
+        _update_pipeline_rgbt_mode(cfg.tta_pipeline, mode)
+
+    data_preprocessor = cfg.get('model', {}).get('data_preprocessor', None)
+    if isinstance(data_preprocessor, dict):
+        data_preprocessor['mean'] = _match_channel_values(
+            data_preprocessor.get('mean'), channels)
+        data_preprocessor['std'] = _match_channel_values(
+            data_preprocessor.get('std'), channels)
+        data_preprocessor['pad_val'] = _match_channel_values(
+            data_preprocessor.get('pad_val'), channels)
+
+
 def main():
     args = parse_args()
 
@@ -59,6 +116,7 @@ def main():
     cfg.launcher = args.launcher
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
+    _update_rgbt_mode(cfg, args.rgbt_mode)
 
     # work_dir is determined in this priority: CLI > segment in file > filename
     if args.work_dir is not None:
